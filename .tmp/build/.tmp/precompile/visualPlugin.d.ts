@@ -1,0 +1,4 @@
+import powerbiVisualsApi from "powerbi-visuals-api";
+import IVisualPlugin = powerbiVisualsApi.visuals.plugins.IVisualPlugin;
+declare var microTicksCalendarChart955A15351BC74D6AB82487372E82C4C6_DEBUG: IVisualPlugin;
+export default microTicksCalendarChart955A15351BC74D6AB82487372E82C4C6_DEBUG;

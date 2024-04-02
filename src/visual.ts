@@ -1,0 +1,871 @@
+import powerbi from "powerbi-visuals-api";
+import { ITooltipServiceWrapper, createTooltipServiceWrapper, TooltipEventArgs } from 'powerbi-visuals-utils-tooltiputils';
+
+import VisualConstructorOptions = powerbi.extensibility.visual.VisualConstructorOptions;
+import VisualUpdateOptions = powerbi.extensibility.visual.VisualUpdateOptions;
+import IVisual = powerbi.extensibility.visual.IVisual;
+import IVisualHost = powerbi.extensibility.visual.IVisualHost;
+import '../style/visual.less'
+import * as d3 from 'd3';
+
+interface DataPoint {
+    date: string;
+    day: number;
+    month: number;
+    year: number;
+    value: number;
+    goal: number
+    week?: number;
+
+}
+
+
+
+
+
+export class Visual implements IVisual {
+    private host: IVisualHost;
+    private parentContainer: HTMLElement;
+    private navContainer: HTMLElement;
+    private svg: d3.Selection<SVGSVGElement, any, HTMLElement, any>;
+    private data: DataPoint[] = [];
+    private tooltipServiceWrapper: ITooltipServiceWrapper;
+    private weekdays: string[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    private selectedQuarter: string = '';
+    private showSymbols: boolean = false;
+
+    private dropdown: HTMLSelectElement; // Dropdown element
+    private dropdownOptions: string[] = ["default", "Q1", "Q2", "Q3", "Q4"];
+    private selectedOptionSymbol: any
+
+    private dropdownContainer: HTMLElement;
+    private legendColors: { value: number; color: string }[] = [
+        { value: 8, color: '#4D004B' },
+        { value: 6, color: '#88419d' },
+        { value: 2, color: '#bfd3e6' },
+        { value: 0, color: '#eaf2f3' },
+    ];
+
+    constructor(options: VisualConstructorOptions) {
+        this.host = options.host;
+        this.showSymbols = false;
+        this.parentContainer = document.createElement('div');
+        this.parentContainer.classList.add('parent-container');
+        options.element.appendChild(this.parentContainer);
+
+        this.navContainer = document.createElement('div');
+        this.navContainer.classList.add('nav-container');
+        this.parentContainer.appendChild(this.navContainer)
+
+        this.tooltipServiceWrapper = createTooltipServiceWrapper(this.host.tooltipService, options.element);
+        this.tooltipServiceWrapper.addTooltip = this.tooltipServiceWrapper.addTooltip.bind(this.tooltipServiceWrapper);
+        this.dropdownContainer = document.createElement('div');
+        this.dropdownContainer.classList.add('dropdown-container');
+        this.navContainer.appendChild(this.dropdownContainer);
+
+
+        this.initializeChart();
+    }
+
+
+
+    private createDropdown() {
+        // Create the label element
+        const dropdownLabel = document.createElement('label');
+        dropdownLabel.textContent = 'Select Quarter:';
+        dropdownLabel.setAttribute('for', 'dropdown-select');
+        dropdownLabel.classList.add('dropdown-label'); // Add class to label element
+
+        // Create the dropdown select element
+        this.dropdown = document.createElement('select');
+        this.dropdown.id = 'dropdown-select'; // Set the id for the dropdown select
+        this.dropdown.classList.add('dropdown'); // Add class to dropdown select element
+        this.dropdown.addEventListener('change', this.onDropdownChange);
+
+        // Append the label and dropdown select to the parent container
+        this.dropdownContainer.appendChild(dropdownLabel);
+        this.dropdownContainer.appendChild(this.dropdown);
+    }
+
+
+
+    private updateDropdownOptions() {
+        this.dropdown.innerHTML = ''; // Clear existing options
+        this.dropdownOptions.forEach(option => {
+            const optionElement = document.createElement('option');
+            optionElement.value = option;
+            optionElement.textContent = option;
+            this.dropdown.appendChild(optionElement);
+        });
+    }
+
+    private setupToggleButton() {
+        const toggleContainer = document.createElement('div');
+        toggleContainer.classList.add('toggle-container');
+
+        this.navContainer.appendChild(toggleContainer);
+
+        const toggleLabel = document.createElement('label');
+        toggleLabel.textContent = 'Toggle Symbols:';
+        toggleLabel.classList.add('toggle-label'); // Add class for styling label
+
+        const toggleSwitch = document.createElement('label');
+        toggleSwitch.classList.add('switch');
+
+        const inputCheckbox = document.createElement('input');
+        inputCheckbox.type = 'checkbox';
+        inputCheckbox.id = 'toggle-checkbox'; // Set the id for the input checkbox
+        inputCheckbox.addEventListener('change', this.toggleSymbols);
+
+        const slider = document.createElement('span');
+        slider.classList.add('slider', 'round');
+
+        toggleSwitch.appendChild(inputCheckbox);
+        toggleSwitch.appendChild(slider);
+
+        toggleContainer.appendChild(toggleLabel); // Append the label before the toggle switch
+        toggleContainer.appendChild(toggleSwitch);
+
+        // this.createSymbolsDropdown();
+    }
+
+
+    private toggleSymbols = () => {
+        this.svg.selectAll('*').remove();
+        this.showSymbols = !this.showSymbols; // Toggle the value of showSymbols
+        const toggleCheckbox = document.getElementById('toggle-checkbox') as HTMLInputElement;
+        toggleCheckbox.checked = this.showSymbols; // Update the checkbox state
+
+        // Update the dropdown UI based on the showSymbols value
+        const symbolsDropdown = document.querySelector('.dropdown') as HTMLSelectElement;
+        if (!this.showSymbols) {
+            symbolsDropdown.disabled = true;
+            symbolsDropdown.classList.add('disabled-dropdown');
+        } else {
+            symbolsDropdown.disabled = false;
+            symbolsDropdown.classList.remove('disabled-dropdown');
+        }
+        const filteredData = this.filterDataByQuarter();
+        if (this.showSymbols && this.selectedOptionSymbol === 'month') {
+            const monthlyTotals = this.highestMonth(filteredData);
+            const maxValue = this.findMaxMonth(monthlyTotals);
+            this.createSymbolHeatmap(filteredData, maxValue);
+        } else if (this.showSymbols && this.selectedOptionSymbol === 'week') {
+            const highestWeeksData = this.highestWeeksAndValuesPerMonth(filteredData);
+            this.createSymbolHeatmap(filteredData, highestWeeksData);
+        } else if (this.showSymbols && this.selectedOptionSymbol === 'day') {
+            const highestDaysData = this.highestDayOfMonth(filteredData);
+            this.createSymbolHeatmap(filteredData, highestDaysData);
+        } else {
+            this.createHeatmapHorizontal(filteredData); // Default heatmap
+        }
+
+        this.createDaysOfWeek(filteredData);
+        this.createWeeksInYear(filteredData);
+    };
+
+    private createSymbolsDropdown() {
+        const dropdownLabel = document.createElement('label');
+        dropdownLabel.textContent = 'Category for Symbol:';
+        dropdownLabel.classList.add('dropdown-label');
+
+        const symbolsDropdown = document.createElement('select');
+        symbolsDropdown.classList.add('dropdown');
+        debugger
+        if (!this.showSymbols) {
+            debugger
+            symbolsDropdown.disabled = true; // Disable the dropdown if symbols are toggled on
+            symbolsDropdown.classList.add('disabled-dropdown'); // Add a class for styling
+        }
+        else {
+            symbolsDropdown.disabled = false;
+            symbolsDropdown.classList.remove('disabled-dropdown');
+
+        }
+
+        symbolsDropdown.addEventListener('change', this.onSymbolsDropdownChange.bind(this)); // Binding 'this' to the event listener
+
+        const options = ["Day", 'Month', 'Week'];
+        options.forEach(option => {
+            const optionElement = document.createElement('option');
+            optionElement.value = option.toLowerCase();
+            optionElement.textContent = option;
+            symbolsDropdown.appendChild(optionElement);
+        });
+
+        this.dropdownContainer.appendChild(dropdownLabel);
+        this.dropdownContainer.appendChild(symbolsDropdown);
+    }
+
+    private onSymbolsDropdownChange = (event: Event) => {
+        const selectedValue = (event.target as HTMLSelectElement).value;
+        this.selectedOptionSymbol = selectedValue;
+
+        this.svg.selectAll('*').remove(); // Clear existing SVG elements
+
+        if (this.showSymbols) {
+            const filteredData = this.filterDataByQuarter(); // Filter data based on selected quarter
+
+            if (selectedValue === 'month') {
+                const monthlyTotals = this.highestMonth(filteredData);
+                const maxValue = this.findMaxMonth(monthlyTotals);
+                this.createSymbolHeatmap(filteredData, maxValue);
+                this.createWeeksInYear(filteredData);
+                this.createDaysOfWeek(filteredData);
+            } else if (selectedValue === 'week') {
+                const highestWeek = this.highestWeeksAndValuesPerMonth(filteredData);
+                this.createSymbolHeatmap(filteredData, highestWeek);
+                this.createWeeksInYear(filteredData);
+                this.createDaysOfWeek(filteredData);
+            } else if (selectedValue === 'day') {
+                const highestDay = this.highestDayOfMonth(filteredData);
+                this.createSymbolHeatmap(filteredData, highestDay);
+                this.createWeeksInYear(filteredData);
+                this.createDaysOfWeek(filteredData);
+            }
+        } else {
+            // Handle case when symbols are not toggled on
+            const filteredData = this.filterDataByQuarter();
+            this.createHeatmapHorizontal(filteredData);
+            this.createWeeksInYear(filteredData);
+            this.createDaysOfWeek(filteredData);
+        }
+
+    };
+
+
+
+
+
+
+    private filterDataByQuarter() {
+        let filteredData: DataPoint[] = [];
+        switch (this.selectedQuarter) {
+            case 'Q1':
+                filteredData = this.data.filter(point => point.month >= 1 && point.month <= 3);
+                break;
+            case 'Q2':
+                filteredData = this.data.filter(point => point.month >= 4 && point.month <= 6);
+                break;
+            case 'Q3':
+                filteredData = this.data.filter(point => point.month >= 7 && point.month <= 9);
+                break;
+            case 'Q4':
+                filteredData = this.data.filter(point => point.month >= 10 && point.month <= 12);
+                break;
+            default:
+                filteredData = this.data;
+                break;
+        }
+        return filteredData;
+    }
+
+
+
+    private highestWeeksAndValuesPerMonth(data: DataPoint[]): Record<number, { week: number, total: number }> {
+        const monthlyWeekTotals: Record<number, { week: number, total: number }[]> = {};
+
+        // Iterate through the data to calculate weekly totals for each month
+        data.forEach(item => {
+            const monthKey = item.month;
+            const weekKey = Math.ceil(item.day / 7); // Assuming 7 days in a week
+
+            if (!monthlyWeekTotals[monthKey]) {
+                monthlyWeekTotals[monthKey] = new Array<{ week: number, total: number }>(5).fill({ week: 0, total: 0 }); // Assuming 5 weeks per month
+            }
+
+            // Increment the weekly total for the corresponding month and week
+            const weekIndex = weekKey - 1;
+            monthlyWeekTotals[monthKey][weekIndex].week = weekKey;
+            monthlyWeekTotals[monthKey][weekIndex].total += item.value;
+        });
+
+        // Find the highest week and its total value for each month
+        const highestWeeksAndValues: Record<number, { week: number, total: number }> = {};
+
+        for (const month in monthlyWeekTotals) {
+            const weeklyTotals = monthlyWeekTotals[month];
+            let maxWeek = 0;
+            let maxValue = 0;
+
+            weeklyTotals.forEach((weekData, index) => {
+                if (weekData.total > maxValue) {
+                    maxWeek = weekData.week;
+                    maxValue = weekData.total;
+                }
+            });
+
+            highestWeeksAndValues[parseInt(month)] = { week: maxWeek, total: maxValue };
+        }
+
+
+        return highestWeeksAndValues;
+    }
+    private highestDayOfMonth(data: DataPoint[]): Record<number, { day: number, value: number }> {
+        const monthlyDaysAndValues: Record<number, { day: number, value: number }> = {};
+
+        // Iterate through the data to calculate highest value of the day for each month
+        data.forEach(item => {
+            const monthKey = item.month;
+
+            if (!monthlyDaysAndValues[monthKey]) {
+                monthlyDaysAndValues[monthKey] = { day: 0, value: 0 };
+            }
+
+            // Check if the current day's value is higher than the stored highest value for the month
+            if (item.value > monthlyDaysAndValues[monthKey].value) {
+                monthlyDaysAndValues[monthKey] = { day: item.day, value: item.value };
+            }
+        });
+
+
+        return monthlyDaysAndValues;
+    }
+
+
+
+    private findMaxMonth(monthlyTotals: Record<number, number>) {
+        let maxMonth = 0;
+        let maxValue = 0;
+        for (const month in monthlyTotals) {
+            const totalValue = monthlyTotals[month];
+            if (totalValue > maxValue) {
+                maxMonth = parseInt(month); // Convert month from string to number
+                maxValue = totalValue;
+            }
+        }
+        return { month: maxMonth, totalValue: maxValue };
+    }
+
+
+    private highestMonth(data: DataPoint[]) {
+        let monthlyTotals = {};
+        data.forEach(item => {
+            if (!monthlyTotals[item.month]) {
+                monthlyTotals[item.month] = 0;
+            }
+            monthlyTotals[item.month] += item.value;
+        });
+
+        return monthlyTotals;
+
+    }
+
+    private onDropdownChange = (event: Event) => {
+        this.selectedQuarter = (event.target as HTMLSelectElement).value;
+
+        const filteredData = this.filterDataByQuarter(); // Filter data based on selected quarter
+
+        this.svg.selectAll('*').remove(); // Clear existing SVG elements
+
+        if (this.showSymbols && this.selectedOptionSymbol === 'month') {
+            const monthlyTotals = this.highestMonth(filteredData);
+            const maxValue = this.findMaxMonth(monthlyTotals);
+            this.createSymbolHeatmap(filteredData, maxValue);
+        } else if (this.showSymbols && this.selectedOptionSymbol === 'week') {
+            const highestWeeksData = this.highestWeeksAndValuesPerMonth(filteredData);
+            this.createSymbolHeatmap(filteredData, highestWeeksData);
+        } else if (this.showSymbols && this.selectedOptionSymbol === 'day') {
+            const highestDaysData = this.highestDayOfMonth(filteredData);
+            this.createSymbolHeatmap(filteredData, highestDaysData);
+        } else {
+            this.createHeatmapHorizontal(filteredData); // Default heatmap
+        }
+
+        this.createDaysOfWeek(filteredData);
+        this.createWeeksInYear(filteredData);
+    };
+
+    private initializeChart() {
+        this.svg = d3.select(this.parentContainer)
+            .append('svg')
+            .attr('class', 'heatmap-container');
+        this.createSymbolsDropdown();
+        this.createDropdown();
+        this.updateDropdownOptions();
+        this.setupToggleButton();
+
+
+
+    }
+
+
+    public update(options: VisualUpdateOptions) {
+        this.svg.selectAll('*').remove();
+        const dataView = options.dataViews[0];
+        if (!dataView || !dataView.categorical || !dataView.categorical.categories || !dataView.categorical.values) {
+            return;
+        }
+
+        const categorical = dataView.categorical;
+        const categoryValues = categorical.categories[0].values as string[];
+        const measureValues = categorical.values[0].values as number[];
+        const goalValues = categorical.categories[1].values as number[];
+
+        this.data = categoryValues.map((date, index) => {
+            const parsedDate = new Date(date);
+            return {
+                date: parsedDate.toLocaleDateString('en-US'),
+                day: parsedDate.getUTCDate(),
+                month: parsedDate.getUTCMonth() + 1,
+                year: parsedDate.getUTCFullYear(),
+                value: measureValues[index],
+                goal: goalValues[index],
+            };
+        });
+
+        this.tooltipServiceWrapper.addTooltip = this.tooltipServiceWrapper.addTooltip.bind(this.tooltipServiceWrapper);
+
+        this.createColorLegend();
+        this.createHeatmapHorizontal(this.data);
+        this.createDaysOfWeek(this.data);
+        this.createWeeksInYear(this.data);
+    }
+
+    private calculateCellColor(value: number, goal: number): string {
+        let cellColor: string;
+
+        if (value >= 0 && value <= 5000) {
+            cellColor = this.legendColors.find(item => item.value === 0)?.color ?? '';
+        } else if (value > 5000 && value <= 10000) {
+            cellColor = this.legendColors.find(item => item.value === 2)?.color ?? '';
+        } else if (value > 10000) {
+            cellColor = this.legendColors.find(item => item.value === 6)?.color ?? '';
+        } else {
+            cellColor = this.legendColors.find(item => item.value === 8)?.color ?? '';
+        }
+
+        return cellColor;
+    }
+
+    private createHeatmapHorizontal(data: DataPoint[]) {
+        const cellSize: number = 10;
+        const cellMargin: number = 2;
+        const marginTop: number = 100; // Margin from the top
+        const marginLeft: number = 80; // Margin from the left
+        const marginRight: number = 5; // Margin from the right
+        const totalColumns: number = 65;
+        const heatmapWidth: number = (cellSize + cellMargin) * totalColumns;
+        const heatmapHeight: number = (cellSize + cellMargin) * 7;
+        this.svg.append('rect')
+            .attr('x', marginLeft)
+            .attr('y', marginTop)
+            .attr('width', heatmapWidth)
+            .attr('height', heatmapHeight)
+            .style('fill', 'none')
+            .style('stroke', '#000')
+            .style('stroke-width', 1);
+
+        this.svg.attr('width', heatmapWidth + marginLeft + marginRight)
+            .attr('height', heatmapHeight + marginTop);
+
+
+
+
+        let xPosition: number = marginLeft;
+        let yPosition: number = marginTop;
+
+        let currentMonthIndex: number = 0;
+        let currentDay: number = 1;
+        let totalDays: number = 0;
+
+
+        for (let colIndex: number = 0; colIndex < 65; colIndex++) {
+            for (let rowIndex: number = 0; rowIndex < 7; rowIndex++) {
+                const dayData: DataPoint | undefined = data.find((point) => point.month === currentMonthIndex + 1 && point.day === currentDay);
+                if (currentDay === 1 && colIndex > 0) {
+                    colIndex++ // Increment rowIndex for the new month
+                }
+                let cellColor: string;
+                if (totalDays >= 365) {
+                    cellColor = '#fff';
+                } else {
+
+                    if (dayData) {
+                        const value: number = Number(dayData.value);
+                        const goal: number = Number(dayData.goal);
+                        cellColor = this.calculateCellColor(value, goal); // Calculate cell color based on value and goal
+
+                    } else {
+                        cellColor = '#fff';
+                    }
+                }
+
+                const rect = this.svg.append('rect')
+                    .attr('class', 'calendar-day')
+                    .attr('x', xPosition + colIndex * (cellSize + cellMargin))
+                    .attr('y', yPosition + rowIndex * (cellSize + cellMargin))
+                    .attr('width', cellSize)
+                    .attr('height', cellSize)
+                    .attr('rx', 4)
+                    .attr('ry', 4)
+                    .style('fill', cellColor)
+                    .style('stroke', 'none')
+                    .style('box-shadow', 'none');
+
+                rect.on('mouseover', () => {
+                    if (dayData) {
+                        this.handleMouseOver(dayData);
+                    }
+                });
+
+
+
+                currentDay++;
+                totalDays++;
+                if (currentDay > new Date(new Date().getFullYear(), currentMonthIndex + 1, 0).getDate()) {
+                    currentDay = 1;
+                    currentMonthIndex = (currentMonthIndex + 1) % 12;
+                }
+            }
+            this.svg.attr('width', (cellSize + cellMargin) * 65 + marginLeft + marginRight);
+            this.svg.attr('height', yPosition + 7 * (cellSize + cellMargin) + marginTop);
+        }
+    }
+
+
+    private createSymbolHeatmap(data: DataPoint[], maxValue?: any, selectedOptionSymbol?: string) {
+        const cellSize: number = 10;
+        const cellMargin: number = 2;
+        const marginTop: number = 100; // Margin from the top
+        const marginLeft: number = 80; // Margin from the left
+        const marginRight: number = 5; // Margin from the right
+        const totalColumns: number = 65;
+        const heatmapWidth: number = (cellSize + cellMargin) * totalColumns;
+        const heatmapHeight: number = (cellSize + cellMargin) * 7;
+
+
+        this.svg.append('rect')
+            .attr('x', marginLeft)
+            .attr('y', marginTop)
+            .attr('width', heatmapWidth)
+            .attr('height', heatmapHeight)
+            .style('fill', 'none')
+            .style('stroke', '#000')
+            .style('stroke-width', 1);
+
+        this.svg.attr('width', heatmapWidth + marginLeft + marginRight)
+            .attr('height', heatmapHeight + marginTop);
+
+        let xPosition: number = marginLeft;
+        let yPosition: number = marginTop;
+        let currentMonthIndex: number = 0;
+        let currentDay: number = 1;
+        let totalDays: number = 0;
+
+        for (let colIndex: number = 0; colIndex < 65; colIndex++) {
+            for (let rowIndex: number = 0; rowIndex < 7; rowIndex++) {
+                const dayData: DataPoint | undefined = data.find((point) => point.month === currentMonthIndex + 1 && point.day === currentDay);
+                if (currentDay === 1 && colIndex > 0) {
+                    colIndex++; // Increment rowIndex for the new month
+                }
+
+                let cellColor: string;
+                let cellContent: string; // For symbol rendering
+
+                if (totalDays >= 365) {
+                    cellColor = '#fff';
+                    cellContent = '';
+                } else {
+                    const currentDate = new Date(new Date().getFullYear(), currentMonthIndex, currentDay);
+                    const dayOfMonth = currentDate.getDate();
+
+                    if (dayData) {
+                        if (this.showSymbols === true && dayData.month === maxValue.month) {
+                            cellColor = '#4D004B'; // Use full red if month matches and symbols are shown
+                            cellContent = '$';
+                        } else if (this.showSymbols === true) {
+                            const currentWeek = Math.ceil((currentDay + new Date(new Date().getFullYear(), currentMonthIndex, 0).getDay()) / 7);
+
+
+                            // Assuming maxValue is an object containing data for each month's weeks
+                            const maxValueMonth = maxValue[currentMonthIndex + 1]; // Get the maxValue data for the current month
+
+                            if (maxValueMonth && currentWeek === maxValueMonth.week) {
+                                cellColor = '#4D004B'; // Use full red if week matches and symbols are shown
+                                cellContent = '$';
+                            } else if (maxValueMonth && currentWeek === maxValueMonth.week && this.selectedQuarter === selectedOptionSymbol) {
+                                cellColor = '#4D004B'; // Use full red if week matches and symbols are shown
+                                cellContent = '$';
+                            } else {
+                                const maxValueDay = maxValue[currentMonthIndex + 1]; // Get the maxValue data for the current month
+
+                                if (maxValueDay && currentDay === maxValueDay.day) {
+                                    cellColor = '#4D004B'; // Use full red if day matches and symbols are shown
+                                    cellContent = '$';
+                                } else {
+                                    cellColor = '#ccc'
+                                    cellContent = '';
+                                }
+                            }
+
+                        }
+
+                    } else {
+                        cellColor = '#fff';
+                        cellContent = '';
+                    }
+                }
+
+                const rect = this.svg.append('rect')
+                    .attr('class', 'calendar-day')
+                    .attr('x', xPosition + colIndex * (cellSize + cellMargin))
+                    .attr('y', yPosition + rowIndex * (cellSize + cellMargin))
+                    .attr('width', cellSize)
+                    .attr('height', cellSize)
+                    .attr('rx', 4)
+                    .attr('ry', 4)
+                    .style('fill', cellColor)
+                    .style('stroke', 'none')
+                    .style('box-shadow', 'none');
+
+                rect.on('mouseover', () => {
+                    if (dayData) {
+                        this.handleMouseOver(dayData);
+                    }
+                });
+
+                // Append the cell content (symbol or empty) based on showSymbols flag
+                this.svg.append('text')
+                    .attr('x', xPosition + colIndex * (cellSize + cellMargin) + cellSize / 2)
+                    .attr('y', yPosition + rowIndex * (cellSize + cellMargin) + cellSize / 2)
+                    .attr('text-anchor', 'middle')
+                    .style('fill', "white")
+                    .attr('dominant-baseline', 'middle')
+                    .attr('font-size', '8px')
+                    .text(cellContent);
+
+                currentDay++;
+                totalDays++;
+
+                if (currentDay > new Date(new Date().getFullYear(), currentMonthIndex + 1, 0).getDate()) {
+                    currentDay = 1;
+                    currentMonthIndex = (currentMonthIndex + 1) % 12;
+                }
+            }
+
+            this.svg.attr('width', (cellSize + cellMargin) * 65 + marginLeft + marginRight);
+            this.svg.attr('height', yPosition + 7 * (cellSize + cellMargin) + marginTop);
+        }
+    }
+
+
+
+    private handleMouseOver = (dataPoint: DataPoint) => {
+        // Extract target element from the event
+        const targetElement = event.target as SVGRectElement;
+
+        // Add tooltip on mouse over
+        this.tooltipServiceWrapper.addTooltip(
+            d3.select(targetElement),
+            (tooltipEvent: TooltipEventArgs<DataPoint>) => {
+                return [
+                    {
+                        displayName: 'Date',
+                        value: dataPoint.date,
+                    },
+                    {
+                        displayName: 'Value',
+                        value: dataPoint.value.toString(),
+                    },
+
+                ];
+            }
+        );
+    }
+    private createDaysOfWeek(data: any, highestValue?: any) {
+        const dayWidth = 10;
+        const xPosition = 65; // Adjust this position based on your heatmap width
+        const yPosition = 95; // Position at the top
+        const weekdayStats: { [key: string]: { totalDiff: number } } = {
+            'Mon': { totalDiff: 0 },
+            'Tue': { totalDiff: 0 },
+            'Wed': { totalDiff: 0 },
+            'Thu': { totalDiff: 0 },
+            'Fri': { totalDiff: 0 },
+            'Sat': { totalDiff: 0 },
+            'Sun': { totalDiff: 0 }
+        };
+
+        data.forEach((point: { year: number; month: number; day: number; value: number; goal: number }) => {
+            const dayOfWeek = new Date(point.year, point.month - 1, point.day).getDay();
+            const dayOfWeekName = this.weekdays[dayOfWeek];
+
+            // Calculate the difference between goal and value for each weekday
+            weekdayStats[dayOfWeekName].totalDiff += point.goal - point.value;
+        });
+
+        const barGroup = this.svg.append('g')
+            .attr('class', 'days-of-week-bar-group')
+            .attr('transform', `translate(${xPosition}, ${yPosition}) rotate(90)`); // Rotate 90 degrees
+
+        const cornerRadius = 3;
+        const barHeight = 40; // Fixed bar height
+
+        // Find the highest totalDiff among all weekdays
+        const maxTotalDiff = Math.max(...Object.values(weekdayStats).map((stats) => stats.totalDiff));
+
+        this.weekdays.forEach((weekday, colIndex) => {
+            const totalDiff = weekdayStats[weekday].totalDiff;
+
+            // Calculate the fill color height based on the totalDiff
+            const fillColorHeight = Math.abs((totalDiff / maxTotalDiff) * barHeight);
+
+            // Calculate the y position for the fill color based on the bar height
+            const fillColorY = 0; // Start from the top
+
+            // Calculate the fill color based on the totalDiff
+            const fillColor = totalDiff >= 0 ? 'rgba(149, 168, 208, 1)' : 'rgba(245, 245, 245, 1)';
+
+            const xBarPosition = colIndex * (dayWidth + 2);
+
+            barGroup.append('rect')
+                .attr('x', xBarPosition)
+                .attr('y', 0) // Start from the top
+                .attr('width', dayWidth)
+                .attr('height', barHeight)
+                .attr('fill', 'whitesmoke') // White background for the bar
+                .attr('stroke', 'none')
+                .attr('rx', cornerRadius)
+                .attr('ry', cornerRadius);
+
+            barGroup.append('rect')
+                .attr('x', xBarPosition)
+                .attr('y', fillColorY)
+                .attr('width', dayWidth)
+                .attr('height', fillColorHeight)
+                .attr('fill', fillColor)
+                .attr('stroke', 'none')
+                .attr('rx', cornerRadius)
+                .attr('ry', cornerRadius);
+
+            barGroup.append('text')
+                .attr('x', xBarPosition + dayWidth / 2)
+                .attr('y', barHeight + 5) // Adjust the y position for text placement
+                .attr('text-anchor', 'middle')
+                .attr('alignment-baseline', 'middle')
+                .attr('font-size', '8px')
+                .text(this.weekdays[colIndex][0]);
+        });
+    }
+
+    private createWeeksInYear(data: any[]) {
+        const weeksInYear = 52; // Assuming a non-leap year
+        const maxDifference = Math.max(...data.map((point) => Math.abs(point.value - point.goal))); // Calculate the maximum absolute difference between values and goals
+
+        const weekWidth = 5;
+        const weekHeight = 30;
+        const xPosition = 80; // Adjust this position based on your heatmap width
+        const yPosition = 60; // Adjust the y position as needed
+
+
+        const barGroup = this.svg.append('g') // Use svg for weeks in a year
+            .attr('class', 'weeks-bar-group')
+            .attr('transform', `translate(${xPosition}, ${yPosition})`);
+
+        const cornerRadius = 3;
+
+        const monthSpacing = 5; // Spacing between months
+
+        data.forEach((point) => {
+            // Calculate the week number based on the month column
+            const weekNumber = Math.floor((point.month - 1) * weeksInYear / 12) + this.getWeekNumber(new Date(point.year, point.month - 1, point.day));
+            const difference = Math.abs(point.value - point.goal);
+            const barHeight = (difference / maxDifference) * weekHeight; // Calculate height based on absolute difference
+            // Determine fill color based on the dropdown selection
+            let fillColor;
+            switch (this.selectedQuarter) {
+                case 'Q1':
+                    fillColor = point.month >= 1 && point.month <= 3 ? 'rgba(149, 168, 208, 1)' : 'rgba(245, 245, 245, 1)';
+                    break;
+                case 'Q2':
+                    fillColor = point.month >= 4 && point.month <= 6 ? 'rgba(149, 168, 208, 1)' : 'rgba(245, 245, 245, 1)';
+                    break;
+                case 'Q3':
+                    fillColor = point.month >= 7 && point.month <= 9 ? 'rgba(149, 168, 208, 1)' : 'rgba(245, 245, 245, 1)';
+                    break;
+                case 'Q4':
+                    fillColor = point.month >= 10 && point.month <= 12 ? 'rgba(149, 168, 208, 1)' : 'rgba(245, 245, 245, 1)';
+                    break;
+                default:
+                    fillColor = difference >= 0 ? 'rgba(149, 168, 208, 1)' : 'rgba(245, 245, 245, 1)';
+                    break;
+            }
+
+            // Adjust x position to create space for each month
+            const adjustedXPosition = weekNumber * (weekWidth + 2) + (point.month - 1) * monthSpacing;
+
+            // First, create the colored rect based on the calculated barHeight and fillColor
+            barGroup.append('rect')
+                .attr('x', adjustedXPosition)
+                .attr('y', weekHeight - barHeight) // Adjust the y position to fill from bottom to top
+                .attr('width', weekWidth)
+                .attr('height', barHeight)
+                .attr('fill', fillColor) // Fill color based on absolute difference
+                .attr('stroke', 'none')
+                .attr('rx', cornerRadius)
+                .attr('ry', cornerRadius);
+
+            // Then, create the white background rect for the remaining height
+            barGroup.append('rect')
+                .attr('x', adjustedXPosition)
+                .attr('y', 0)
+                .attr('width', weekWidth)
+                .attr('height', weekHeight - barHeight) // Adjust the height
+                .attr('fill', 'whitesmoke') // White background for the remaining space
+                .attr('stroke', 'none')
+                .attr('rx', cornerRadius)
+                .attr('ry', cornerRadius);
+        });
+    }
+    // Helper function to get week number from date
+    private getWeekNumber(date: Date): number {
+        const startOfYear = new Date(date.getFullYear(), 0, 1);
+        const diff = date.getTime() - startOfYear.getTime();
+        const oneDay = 1000 * 60 * 60 * 24;
+        const weekNumber = Math.ceil((diff / oneDay + startOfYear.getDay() + 1) / 7);
+        return weekNumber;
+    }
+
+    private createColorLegend() {
+        const legendWidth = 200; // Width of the legend bar
+        const legendHeight = 20; // Height of each legend item
+
+        // Determine label spacing dynamically based on legend width and number of labels
+        const labelSpacing = 20;
+
+        const legendGroup = d3.select(this.navContainer)
+            .append('svg') // Append an SVG element to the parent element
+            .attr('class', 'color-legend-container') // Changed to a container class
+            .attr('width', legendWidth)
+            .attr('height', legendHeight + labelSpacing);
+
+        // Add color boxes for legend items
+        this.legendColors.forEach((item, index) => {
+            legendGroup.append('rect')
+                .attr('x', index * labelSpacing)
+                .attr('y', 0)
+                .attr('width', 15) // Width of each color box
+                .attr('height', 15)
+                .style('fill', item.color)
+                .style('stroke', 'none')
+                .attr('rx', 0)
+                .attr('ry', 0);
+
+            // Add labels to the left and right of the legend
+            if (index === 0 || index === this.legendColors.length - 1) {
+                const labelText = index === 0 ? 'High' : 'Low';
+                legendGroup.append('text')
+                    .attr('x', index === 0 ? 0 : 80)
+                    .attr('y', 20) // Position label at a fixed height
+                    .text(labelText)
+                    .attr('text-anchor', index === 0 ? 'start' : 'end')
+                    .attr('alignment-baseline', 'middle')
+                    .attr('font-size', '12px')
+                    .attr('fill', 'black');
+            }
+        });
+    }
+
+
+}
