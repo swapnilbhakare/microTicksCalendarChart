@@ -48,7 +48,7 @@ export class Visual implements IVisual {
 
     constructor(options: VisualConstructorOptions) {
         this.host = options.host;
-        this.showSymbols = false;
+
         this.parentContainer = document.createElement('div');
         this.parentContainer.classList.add('parent-container');
         options.element.appendChild(this.parentContainer);
@@ -62,9 +62,9 @@ export class Visual implements IVisual {
         this.dropdownContainer = document.createElement('div');
         this.dropdownContainer.classList.add('dropdown-container');
         this.navContainer.appendChild(this.dropdownContainer);
-
-
         this.initializeChart();
+
+
     }
 
 
@@ -126,7 +126,7 @@ export class Visual implements IVisual {
         toggleContainer.appendChild(toggleLabel); // Append the label before the toggle switch
         toggleContainer.appendChild(toggleSwitch);
 
-        // this.createSymbolsDropdown();
+
     }
 
 
@@ -134,54 +134,64 @@ export class Visual implements IVisual {
         this.svg.selectAll('*').remove();
         this.showSymbols = !this.showSymbols; // Toggle the value of showSymbols
         const toggleCheckbox = document.getElementById('toggle-checkbox') as HTMLInputElement;
-        toggleCheckbox.checked = this.showSymbols; // Update the checkbox state
+        toggleCheckbox.checked = this.showSymbols;
+
+        const symbolsDropdown = document.getElementById('symbols-dropdown'); // Assuming the ID of the symbols dropdown is 'symbols-dropdown'
+        const symbolsDropdownLabel = document.getElementById("symbols-dropdown-label")
+        if (this.showSymbols) {
+            symbolsDropdownLabel.style.display = 'inline-block';
+            symbolsDropdown.style.display = 'block'; // Show the symbols dropdown
+        } else {
+            symbolsDropdownLabel.style.display = 'none';
+            symbolsDropdown.style.display = 'none'; // Hide the symbols dropdown
+        }
+
+
 
         // Update the dropdown UI based on the showSymbols value
-        const symbolsDropdown = document.querySelector('.dropdown') as HTMLSelectElement;
         if (!this.showSymbols) {
-            symbolsDropdown.disabled = true;
-            symbolsDropdown.classList.add('disabled-dropdown');
-        } else {
-            symbolsDropdown.disabled = false;
-            symbolsDropdown.classList.remove('disabled-dropdown');
-        }
-        const filteredData = this.filterDataByQuarter();
-        if (this.showSymbols && this.selectedOptionSymbol === 'month') {
-            const monthlyTotals = this.highestMonth(filteredData);
-            const maxValue = this.findMaxMonth(monthlyTotals);
-            this.createSymbolHeatmap(filteredData, maxValue);
-        } else if (this.showSymbols && this.selectedOptionSymbol === 'week') {
-            const highestWeeksData = this.highestWeeksAndValuesPerMonth(filteredData);
-            this.createSymbolHeatmap(filteredData, highestWeeksData);
-        } else if (this.showSymbols && this.selectedOptionSymbol === 'day') {
-            const highestDaysData = this.highestDayOfMonth(filteredData);
-            this.createSymbolHeatmap(filteredData, highestDaysData);
-        } else {
-            this.createHeatmapHorizontal(filteredData); // Default heatmap
-        }
 
-        this.createDaysOfWeek(filteredData);
-        this.createWeeksInYear(filteredData);
+            const filteredData = this.filterDataByQuarter();
+            this.createHeatmapHorizontal(filteredData);
+            this.createWeeksInYear(filteredData);
+            this.createDaysOfWeek(filteredData);
+        } else {
+
+            const filteredData = this.filterDataByQuarter();
+            if (this.selectedOptionSymbol === 'month') {
+                const monthlyTotals = this.highestMonth(filteredData);
+                const maxValue = this.findMaxMonth(monthlyTotals);
+                this.createSymbolHeatmap(filteredData, maxValue);
+            } else if (this.selectedOptionSymbol === 'week') {
+                const highestWeeksData = this.highestWeeksAndValuesPerMonth(filteredData);
+                this.createSymbolHeatmap(filteredData, highestWeeksData);
+            } else if (this.selectedOptionSymbol === 'day') {
+                const highestDaysData = this.highestDayOfMonth(filteredData);
+                this.createSymbolHeatmap(filteredData, highestDaysData);
+            } else {
+                // Show day data as default if no specific filter data is selected
+                const highestDaysData = this.highestDayOfMonth(filteredData);
+                this.createSymbolHeatmap(filteredData, highestDaysData);
+            }
+
+            // Also update weeks and days regardless of the selectedOptionSymbol
+            this.createWeeksInYear(filteredData);
+            this.createDaysOfWeek(filteredData);
+        }
     };
 
+
+
     private createSymbolsDropdown() {
+
+
         const dropdownLabel = document.createElement('label');
         dropdownLabel.textContent = 'Category for Symbol:';
         dropdownLabel.classList.add('dropdown-label');
-
+        dropdownLabel.setAttribute('id', 'symbols-dropdown-label');
         const symbolsDropdown = document.createElement('select');
         symbolsDropdown.classList.add('dropdown');
-        debugger
-        if (!this.showSymbols) {
-            debugger
-            symbolsDropdown.disabled = true; // Disable the dropdown if symbols are toggled on
-            symbolsDropdown.classList.add('disabled-dropdown'); // Add a class for styling
-        }
-        else {
-            symbolsDropdown.disabled = false;
-            symbolsDropdown.classList.remove('disabled-dropdown');
-
-        }
+        symbolsDropdown.setAttribute('id', 'symbols-dropdown');
 
         symbolsDropdown.addEventListener('change', this.onSymbolsDropdownChange.bind(this)); // Binding 'this' to the event listener
 
@@ -193,9 +203,17 @@ export class Visual implements IVisual {
             symbolsDropdown.appendChild(optionElement);
         });
 
+        symbolsDropdown.style.display = 'none';
+        dropdownLabel.style.display = 'none';
         this.dropdownContainer.appendChild(dropdownLabel);
         this.dropdownContainer.appendChild(symbolsDropdown);
+
     }
+
+
+
+
+
 
     private onSymbolsDropdownChange = (event: Event) => {
         const selectedValue = (event.target as HTMLSelectElement).value;
@@ -352,38 +370,53 @@ export class Visual implements IVisual {
     }
 
     private onDropdownChange = (event: Event) => {
-        this.selectedQuarter = (event.target as HTMLSelectElement).value;
-
-        const filteredData = this.filterDataByQuarter(); // Filter data based on selected quarter
+        const selectedValue = (event.target as HTMLSelectElement).value;
+        this.selectedQuarter = selectedValue;
 
         this.svg.selectAll('*').remove(); // Clear existing SVG elements
 
-        if (this.showSymbols && this.selectedOptionSymbol === 'month') {
-            const monthlyTotals = this.highestMonth(filteredData);
-            const maxValue = this.findMaxMonth(monthlyTotals);
-            this.createSymbolHeatmap(filteredData, maxValue);
-        } else if (this.showSymbols && this.selectedOptionSymbol === 'week') {
-            const highestWeeksData = this.highestWeeksAndValuesPerMonth(filteredData);
-            this.createSymbolHeatmap(filteredData, highestWeeksData);
-        } else if (this.showSymbols && this.selectedOptionSymbol === 'day') {
-            const highestDaysData = this.highestDayOfMonth(filteredData);
-            this.createSymbolHeatmap(filteredData, highestDaysData);
-        } else {
-            this.createHeatmapHorizontal(filteredData); // Default heatmap
-        }
+        if (this.showSymbols) {
+            const filteredData = this.filterDataByQuarter(); // Filter data based on selected quarter
 
-        this.createDaysOfWeek(filteredData);
-        this.createWeeksInYear(filteredData);
+            if (this.selectedOptionSymbol === 'month') {
+                const monthlyTotals = this.highestMonth(filteredData);
+                const maxValue = this.findMaxMonth(monthlyTotals);
+                this.createSymbolHeatmap(filteredData, maxValue);
+            } else if (this.selectedOptionSymbol === 'week') {
+                const highestWeek = this.highestWeeksAndValuesPerMonth(filteredData);
+                this.createSymbolHeatmap(filteredData, highestWeek);
+            } else if (this.selectedOptionSymbol === 'day') {
+                const highestDay = this.highestDayOfMonth(filteredData);
+                this.createSymbolHeatmap(filteredData, highestDay);
+            } else {
+                // Show day data as default if no specific filter data is selected
+                const highestDay = this.highestDayOfMonth(filteredData);
+                this.createSymbolHeatmap(filteredData, highestDay);
+            }
+
+            // Also update weeks and days regardless of the selectedOptionSymbol
+            this.createWeeksInYear(filteredData);
+            this.createDaysOfWeek(filteredData);
+        } else {
+            // Handle case when symbols are not toggled on
+            const filteredData = this.filterDataByQuarter();
+            this.createHeatmapHorizontal(filteredData);
+            this.createWeeksInYear(filteredData);
+            this.createDaysOfWeek(filteredData);
+        }
     };
+
 
     private initializeChart() {
         this.svg = d3.select(this.parentContainer)
             .append('svg')
             .attr('class', 'heatmap-container');
-        this.createSymbolsDropdown();
+
         this.createDropdown();
         this.updateDropdownOptions();
+        this.createSymbolsDropdown()
         this.setupToggleButton();
+
 
 
 
@@ -420,6 +453,7 @@ export class Visual implements IVisual {
         this.createHeatmapHorizontal(this.data);
         this.createDaysOfWeek(this.data);
         this.createWeeksInYear(this.data);
+
     }
 
     private calculateCellColor(value: number, goal: number): string {
@@ -441,7 +475,7 @@ export class Visual implements IVisual {
     private createHeatmapHorizontal(data: DataPoint[]) {
         const cellSize: number = 10;
         const cellMargin: number = 2;
-        const marginTop: number = 100; // Margin from the top
+        const marginTop: number = 50; // Margin from the top
         const marginLeft: number = 80; // Margin from the left
         const marginRight: number = 5; // Margin from the right
         const totalColumns: number = 65;
@@ -527,7 +561,7 @@ export class Visual implements IVisual {
     private createSymbolHeatmap(data: DataPoint[], maxValue?: any, selectedOptionSymbol?: string) {
         const cellSize: number = 10;
         const cellMargin: number = 2;
-        const marginTop: number = 100; // Margin from the top
+        const marginTop: number = 50; // Margin from the top
         const marginLeft: number = 80; // Margin from the left
         const marginRight: number = 5; // Margin from the right
         const totalColumns: number = 65;
@@ -675,8 +709,8 @@ export class Visual implements IVisual {
     }
     private createDaysOfWeek(data: any, highestValue?: any) {
         const dayWidth = 10;
-        const xPosition = 65; // Adjust this position based on your heatmap width
-        const yPosition = 95; // Position at the top
+        const xPosition = 60; // Adjust this position based on your heatmap width
+        const yPosition = 50; // Position at the top
         const weekdayStats: { [key: string]: { totalDiff: number } } = {
             'Mon': { totalDiff: 0 },
             'Tue': { totalDiff: 0 },
@@ -756,7 +790,7 @@ export class Visual implements IVisual {
         const weekWidth = 5;
         const weekHeight = 30;
         const xPosition = 80; // Adjust this position based on your heatmap width
-        const yPosition = 60; // Adjust the y position as needed
+        const yPosition = 10; // Adjust the y position as needed
 
 
         const barGroup = this.svg.append('g') // Use svg for weeks in a year
@@ -829,41 +863,51 @@ export class Visual implements IVisual {
 
     private createColorLegend() {
         const legendWidth = 200; // Width of the legend bar
-        const legendHeight = 20; // Height of each legend item
-
-        // Determine label spacing dynamically based on legend width and number of labels
-        const labelSpacing = 20;
-
-        const legendGroup = d3.select(this.navContainer)
+        const legendHeight = 15; // Height of the legend bar
+        // Height of the legend bar
+        const labelPadding = 5; //
+        const legendGradient = d3.select(this.parentContainer)
             .append('svg') // Append an SVG element to the parent element
             .attr('class', 'color-legend-container') // Changed to a container class
             .attr('width', legendWidth)
-            .attr('height', legendHeight + labelSpacing);
+            .attr('height', legendHeight);
 
-        // Add color boxes for legend items
+        const defs = legendGradient.append('defs');
+
+        const linearGradient = defs.append('linearGradient')
+            .attr('id', 'color-gradient')
+            .attr('x1', '0%')
+            .attr('y1', '0%')
+            .attr('x2', '100%')
+            .attr('y2', '0%');
+
+        // Add color stops to the gradient
         this.legendColors.forEach((item, index) => {
-            legendGroup.append('rect')
-                .attr('x', index * labelSpacing)
-                .attr('y', 0)
-                .attr('width', 15) // Width of each color box
-                .attr('height', 15)
-                .style('fill', item.color)
-                .style('stroke', 'none')
-                .attr('rx', 0)
-                .attr('ry', 0);
+            linearGradient.append('stop')
+                .attr('offset', `${(index / (this.legendColors.length - 1)) * 100}%`)
+                .style('stop-color', item.color);
+        });
 
-            // Add labels to the left and right of the legend
-            if (index === 0 || index === this.legendColors.length - 1) {
-                const labelText = index === 0 ? 'High' : 'Low';
-                legendGroup.append('text')
-                    .attr('x', index === 0 ? 0 : 80)
-                    .attr('y', 20) // Position label at a fixed height
-                    .text(labelText)
-                    .attr('text-anchor', index === 0 ? 'start' : 'end')
-                    .attr('alignment-baseline', 'middle')
-                    .attr('font-size', '12px')
-                    .attr('fill', 'black');
-            }
+        legendGradient.append('rect')
+            .attr('x', 0)
+            .attr('y', 0)
+            .attr('width', legendWidth)
+            .attr('height', legendHeight)
+            .style('fill', 'url(#color-gradient)');
+
+        const labelGroup = legendGradient.append('g').attr('class', 'legend-labels');
+
+        this.legendColors.forEach((item, index) => {
+            const labelText = index === 0 ? 'High' : 'Low';
+            labelGroup.append('text')
+                .attr('x', index === 0 ? labelPadding : legendWidth - labelPadding)
+                .attr('y', legendHeight + labelPadding * 2)
+                .text(labelText)
+                .style("fill", '#000')
+                .attr('text-anchor', index === 0 ? 'start' : 'end')
+                .attr('alignment-baseline', 'middle')
+
+
         });
     }
 

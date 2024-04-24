@@ -1,6 +1,6 @@
 .parent-container {
 display: flex;
-align-items: center;
+// align-items: center;
 justify-content: center;
 flex-direction: column;
 .nav-container{
@@ -13,6 +13,7 @@ flex-direction: column;
         justify-content: space-around;
 
         .dropdown{
+      
             position: relative;
             text-align: center;
             background-color: #f0f0f0;
@@ -22,7 +23,6 @@ flex-direction: column;
             margin: 0 20px;
             border: none;
          
-            border: none;
             color: inherit;
             cursor: pointer;
             border-radius: 5px;
@@ -48,10 +48,7 @@ flex-direction: column;
                 border: inherit;
                 cursor: pointer;
             }
-            .dropdown.disabled-dropdown {
-                opacity: 0.5; /* Reduce opacity when disabled */
-                pointer-events: none; /* Disable pointer events */
-            }
+           
             
         }
         
@@ -134,10 +131,17 @@ flex-direction: column;
 .color-legend-container {
     position: absolute;
      display: flex;
-     top: 0;
-     right: 0;
+     top: 170px;
+     right: 450px;
+     border-radius: 10px;
 
   }
+  .legend-labels .text {
+    font-size: 30px;
+    fill: black;
+    color: #000;
+    pointer-events: none; 
+}
    
 }
 

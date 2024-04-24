@@ -1,6 +1,5 @@
 .parent-container {
   display: flex;
-  align-items: center;
   justify-content: center;
   flex-direction: column;
 }
@@ -43,12 +42,6 @@
   border-radius: 5px;
   border: inherit;
   cursor: pointer;
-}
-.parent-container .nav-container .dropdown-container .dropdown .dropdown.disabled-dropdown {
-  opacity: 0.5;
-  /* Reduce opacity when disabled */
-  pointer-events: none;
-  /* Disable pointer events */
 }
 .parent-container .nav-container .toggle-container {
   display: inline-block;
@@ -108,8 +101,15 @@
 .parent-container .color-legend-container {
   position: absolute;
   display: flex;
-  top: 0;
-  right: 0;
+  top: 170px;
+  right: 450px;
+  border-radius: 10px;
+}
+.parent-container .legend-labels .text {
+  font-size: 30px;
+  fill: black;
+  color: #000;
+  pointer-events: none;
 }
 
 
